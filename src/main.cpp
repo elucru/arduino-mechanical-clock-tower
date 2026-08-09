@@ -129,7 +129,7 @@ static void moveClockHands(uint8_t directionToMove, uint32_t secondsToMove)
 
     digitalWrite(STEPPER_DIR_PIN, directionToMove); /* Set direction */
 
-    for (uint32_t step = 1; step < noOfsteps; step++)
+    for (uint32_t step = 0; step < noOfsteps; step++)
     {
         digitalWrite(STEPPER_PULSE_PIN, HIGH);
         delayMicroseconds(STEPPER_PULSE_TIME);
