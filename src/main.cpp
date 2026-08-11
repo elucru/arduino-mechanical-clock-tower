@@ -11,7 +11,7 @@
 **/
 
 /* This is for testing with 3D printed clock, commented or deleted for normal clock tower */
-#define PRINTED_CLOCK_3D 
+// #define PRINTED_CLOCK_3D 
 
 #ifdef PRINTED_CLOCK_3D
   #define STEPPER_DRIVER_ENABLE_PIN       10  /* Enable/disable the stepper motor driver */
