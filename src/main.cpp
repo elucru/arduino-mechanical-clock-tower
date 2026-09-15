@@ -2,8 +2,8 @@
 
 /*  Tower clock update - implements automatic time adjustment after power supply is restored.
     It uses an RTC to keep the exact time and write to EEPROM the moment of power failure (connected: SCL -> A5, SDA -> A4).
-    The power failure sensor is a voltage divider with resistors, calculated to have a 5V output, 
-      mounted on the output of the stepper motor driver power supply.
+    The power failure sensor is a voltage divider with resistors, calculated to have a 4,5V output, 
+      mounted on the output of the stepper motor driver power supply 36V.
     It is set to run the code, one pulse, in approximately 180 milliseconds (two pulses = 1 step), on original clock tower, 
       and 45 milliseconds (1/16 step, 200 pulses = 1 hour) on 3D printed clock tower, 
     with a pulse width of 5 microseconds, using delay function to control the timing of the pulses.
@@ -51,13 +51,13 @@ void setup(void)
   Serial.begin(9600);
 
   /* Check if the RTC work properly, otherwhise it will stop the program to run. */
-  if (!rtc.begin())
+  if(!rtc.begin())
   {
       Serial.println("Couldn't find RTC!");
       Serial.flush();
-      while (1)
+      while(1)
       {/* Stop the program if RTC is not found */
-          if (rtc.begin())
+          if(rtc.begin())
           {/* Start the program if RTC is found */
               Serial.println("RTC OK now!");
               break;
@@ -79,6 +79,11 @@ void setup(void)
   /* Turn off the built-in LED to save some energy ... :) */
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, LOW);
+  /* Prepare the yellow control LED to signal status (e.g., motor running for adjustment)*/
+  pinMode(CONTROL_YELLOW_LED_PIN, OUTPUT);   
+  digitalWrite(CONTROL_YELLOW_LED_PIN, LOW);
+  /* Prepare the button for user input, for future use */
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
   
   /* Stepper and power down setup */
   pinMode(POWER_DOWN_PIN, INPUT);
@@ -101,7 +106,7 @@ void setup(void)
   uint16_t index = (EEPROM[0] << 8) | EEPROM[1]; 
 
   /* Check if index exceeds EEPROM size */
-  if (index > EEPROM_MAX_USE_SIZE)
+  if(index > EEPROM_MAX_USE_SIZE)
   {/* Reset EEPROM if index exceeds limit (1024) or is a new uC. */
       resetCounters();
       EEPROM[1u] = 4u;/* This will be incremented with 3 at first power down, so time will be saved in EEPROM[7]! */
@@ -111,7 +116,7 @@ void setup(void)
       In case of uC reset don't save time in EEPROM again, just normal clock action. */
       uint8_t recoveryFlag = CHECK_TIME_RECOVER_FLAG(EEPROM[index]);
       
-      if (false != recoveryFlag)
+      if(false != recoveryFlag)
       { /* Check if the MSB bit is set, indicating that time was not recovery yet. */
           saveTimeToEEPROM = true;
           powerDown = true; /* Set powerDown to true to avoid immediate power down handling */
@@ -120,11 +125,10 @@ void setup(void)
       }
   }
 
-  Serial.println("Program started ... write f for cw or b for ccw direction, follow by the numbers of hours, minutes and seconds.");
-  Serial.println("");
-  Serial.println("Example for forwarding 2 hours, 30 minutes and 10 seconds is: " );
-  Serial.println("f 2 30 10" );
-  Serial.println("Always follow every command with 3 numbers, even ret/rtc/reset, e.g. 'ret 0 0 0'." );
+  Serial.println("Program started ... write f for cw or b for ccw direction, follow by the numbers of hours, minutes and seconds like:");
+  Serial.println("  f 2 30 10" );
+  Serial.println("Or other commands follow by zeros like:");
+  Serial.println("  ret 0 0 0; rtc 0 0 0; reset 0 0 0.");
 }
 
 /***************************************************************************************************************
@@ -142,7 +146,7 @@ void loop(void)
   uint8_t currentPowerCheckState = digitalRead(POWER_DOWN_PIN);
 
   /* Handle debounce logic */
-  if (currentPowerCheckState != lastPowerCheckState)
+  if(currentPowerCheckState != lastPowerCheckState)
   {/* The POWER_DOWN_PIN state has been changed, start monitoring the duration. */
     lastDebounceTime = millis();
     if (lastDebounceTime >= MAX_MILLIS_IN_DELAY)
@@ -151,14 +155,14 @@ void loop(void)
     }  
   }
 
-  if ((millis() - lastDebounceTime) > DEBOUNCE_DELAY)
+  if((millis() - lastDebounceTime) > DEBOUNCE_DELAY)
   {/* Only the change above the DEBOUNCE_DELAY threshold is taken into account, to avoid spikes and shorts power downs. */
     powerDown = (currentPowerCheckState == LOW);
   }
   /* Update the POWER_DOWN_PIN state. */
   lastPowerCheckState = currentPowerCheckState;
 
-  if (SUCCESS == writeToEEPROMStatus)
+  if(SUCCESS == writeToEEPROMStatus)
   {/* If the last save in EEPROM is corrupted or unusable the clock stops. */
     if (true == powerDown)
     {
@@ -169,11 +173,20 @@ void loop(void)
         handlePowerUp();
     }
   }
+  else
+  {
+      Serial.println("EEPROM write or RTC read failed or corrupted.");
+  }
 
-  if (Serial.available())
+  if(Serial.available())
   {
     processSerialCommand();
   }
+/* Test button press. Can be used for future debugging purposes. */
+//   if(digitalRead(BUTTON_PIN) == LOW)
+//   {
+//     Serial.println("Am apasat butonul.");
+//   }
 }
 
 /***************************************************************************************************************
@@ -186,8 +199,6 @@ static void handlePowerDown(void)
 {
     if (true != saveTimeToEEPROM)
     {
-        Serial.println("Write EEPROM");
-
         saveTime(); /* Save RTC data to EEPROM */
     }
 }
@@ -213,6 +224,23 @@ static void saveTime(void)
     uint8_t currentDay = currentTime.day();
     uint8_t currentMonth = currentTime.month();
     uint8_t currentYear = currentTime.year();
+
+    if ((currentHour >= 24) || (currentMinute >= 60) || (currentSecond >= 60))
+    { /* Retry once: an out-of-range value is more likely a transient I2C glitch than a permanent fault. */
+        currentTime = rtc.now();
+        currentHour = currentTime.hour();
+        currentMinute = currentTime.minute();
+        currentSecond = currentTime.second();
+        currentDay = currentTime.day();
+        currentMonth = currentTime.month();
+        currentYear = currentTime.year();
+    }
+
+    if ((currentHour >= 24) || (currentMinute >= 60) || (currentSecond >= 60))
+    { /* Still invalid after retry: don't persist a bogus time. */
+        writeToEEPROMStatus = ERROR;
+        return;
+    }
 
     index += 3u; /* Increment index to save the current time */
 
@@ -246,8 +274,11 @@ static void saveTime(void)
     currentHour = SET_TIME_RECOVER_FLAG(currentHour); 
     /* Write the data in EEPROM and check the status of writing. */
     writeToEEPROMStatus = writeToEEPROM(index, currentHour, currentMinute, currentSecond, currentDay, currentMonth, currentYear); /* Write current time to EEPROM */
-    /* Set flag to indicate time has been saved */
-    saveTimeToEEPROM = true;
+    /* Only mark as saved if the write actually succeeded, otherwise the flag would lie about the EEPROM content. */
+    if (SUCCESS == writeToEEPROMStatus)
+    {
+        saveTimeToEEPROM = true;
+    }
 }
 
 /***************************************************************************************************************
@@ -399,8 +430,6 @@ static void handlePowerUp(void)
         { /* Check if the power is up and signal if the clock was set correctly. */
             uint8_t setClockFlag = SUCCESS;
 
-            Serial.println("Read EEPROM and adjust clock hands ...");
-
             setClockFlag = setClock();
 
             if (SUCCESS != setClockFlag)
@@ -435,13 +464,28 @@ static uint8_t setClock(void)
     uint16_t minuteToStep = 0;
     uint16_t secondsToStep = 0;
 
+    if ((currentHour >= 24) || (currentMinute >= 60) || (currentSecond >= 60))
+    { /* Retry once: an out-of-range value is more likely a transient I2C glitch than a permanent fault. */
+        currentTime = rtc.now();
+        currentHour = currentTime.hour();
+        currentMinute = currentTime.minute();
+        currentSecond = currentTime.second();
+
+        if ((currentHour >= 24) || (currentMinute >= 60) || (currentSecond >= 60))
+        { /* Still invalid after retry: abort instead of computing a correction from a bogus current time. */
+            return ERROR;
+        }
+    }
+
     /* Clear the MSB bit of the saved hour to indicate recovery is complete */
     savedHour = CLEAR_TIME_RECOVER_FLAG(savedHour);
-    /* Robustness for a new EEPROM (all 0xFFu) */
-    if (savedHour >= 24)
-    { /* Robustness for an invalid hour. */
+
+    /* Robustness for a new EEPROM (all 0xFFu) or a corrupted EEPROM read */
+    if ((savedHour >= 24) || (savedMinute >= 60) || (savedSecond >= 60))
+    { /* Invalid saved time: abort instead of moving the hands from a fabricated baseline. */
         return ERROR;
     }
+
     /* Save hour after clear the recovery flag to mark that recovery was done. */
     EEPROM[index] = savedHour;
 
@@ -540,11 +584,32 @@ static uint8_t setClock(void)
         }
     }
 
-    /* Compensate the time need to set the clock, 2 seconds to move 1 hour, 5 seconds debounce delay. */
-    secondsToStep += (hourDifference * 2u) + 5u;
+    /* Compensate the time needed to set the clock: real time keeps elapsing while moveClockHands() executes,
+       proportional to the total movement (not just whole hours), so scale by the full secondsToStep here,
+       plus 1 second of margin for the fixed overhead (RTC read, single EEPROM byte write) before the move
+       starts - measured at only a few milliseconds, so 1 whole second already gives ample safety margin.
+       This must always be added towards CW (forward in time): when the shorter path is CCW, the compensation
+       has to be subtracted from the CCW amount (or flipped to a small CW move) instead of added to it, otherwise
+       the clock hands end up overshooting by roughly twice the compensation whenever a CCW correction is used. */
+    uint16_t stepCompensation = (uint16_t)(((uint32_t)secondsToStep * MOVE_COMPENSATION_SEC_PER_HOUR) / 3600UL) + 1u;
 
-    /* Print the time to be set */
-    printFormatedDateAndTime(hourDifference, minuteDifference, secondsDifference, 0u, 0u, 0u); 
+    if (directionToMove == CW_DIR)
+    {
+        secondsToStep += stepCompensation;
+    }
+    else if (secondsToStep >= stepCompensation)
+    {
+        secondsToStep -= stepCompensation;
+    }
+    else
+    {
+        secondsToStep = stepCompensation - secondsToStep;
+        directionToMove = CW_DIR;
+    }
+
+    /* Print the actual time the clock hands will be moved (after compensation), not the raw component differences. */
+    printFormatedDateAndTime(secondsToStep / 3600u, (secondsToStep % 3600u) / 60u, secondsToStep % 60u, 0u, 0u, 0u);
+    Serial.println((directionToMove == CW_DIR) ? "Direction: CW" : "Direction: CCW");
 
     /* Move the hands of the clock with the respective secondes. */
     moveClockHands(directionToMove, secondsToStep);
@@ -568,14 +633,11 @@ static uint8_t setClock(void)
  ***************************************************************************************************************/
 static void moveClockHands(uint8_t directionToMove, uint32_t secondsToMove)
 {
-    uint32_t count = 0;
-#ifdef PRINTED_CLOCK_3D
-    /* Convert seconds to steps and correct lost steps (80.000 de microsteps (1/16) for one hour) */
-    uint32_t noOfsteps = ((secondsToMove * (uint32_t)22) + ((secondsToMove / (uint32_t)4) - ((uint32_t)100 * (secondsToMove / (uint32_t)3600))));
-#else
-    /* Convert seconds to steps and correct lost steps (20.000 impulses for one hour) */
-    uint32_t noOfsteps = ((secondsToMove * (uint32_t)5) + (secondsToMove / (uint32_t)4) + ((uint32_t)100 * (secondsToMove / (uint32_t)3600)));
-#endif
+    bool ledState = 0;
+    /* Convert seconds to steps: A_QUARTER*4 steps per hour (same calibration as MOVE_COMPENSATION_SEC_PER_HOUR),
+       rounded to the nearest step instead of the old 22+1/4 approximation, which only matched exactly on whole
+       hours and otherwise overshot by ~0.125% (up to ~4-5 seconds of extra movement) for any other duration. */
+    uint32_t noOfsteps = (((uint32_t)secondsToMove * A_QUARTER * 4UL) + 1800UL) / 3600UL;
 
     digitalWrite(STEPPER_DIR_PIN, directionToMove); /* Set direction */
 
@@ -585,14 +647,20 @@ static void moveClockHands(uint8_t directionToMove, uint32_t secondsToMove)
         delayMicroseconds(STEPPER_PULSE_TIME);
         digitalWrite(STEPPER_PULSE_PIN, LOW);
         delayMicroseconds(STEPPER_FAST_TIME_ADJUSTMENT);
-        if(!((step) % A_QUARTER))
-        { // it is use for feedback: 
-          count++;                        //    It count and print quarter of hour 
-          Serial.print(count);            //    through serial monitor.
-          Serial.print(", ");
+        if(!((step) % (A_QUARTER/10)))
+        { // it is use for feedback:
+            if (ledState)
+            {
+                digitalWrite(CONTROL_YELLOW_LED_PIN, LOW); /* Turn off the yellow control LED for feedback */
+                ledState = 0;
+            } else {
+                digitalWrite(CONTROL_YELLOW_LED_PIN, HIGH); /* Turn on the yellow control LED */
+                ledState = 1;
+            }
         }
     }
     digitalWrite(STEPPER_DIR_PIN, CW_DIR); /* Set direction cw */
+    digitalWrite(CONTROL_YELLOW_LED_PIN, LOW); /* Turn off the yellow control LED for feedback */
 }
 
 /***************************************************************************************************************************
@@ -681,7 +749,7 @@ static void processSerialCommand()
     { /* Read RTC */
         DateTime currentTime = rtc.now();
 
-        Serial.print("Current time: ");
+        Serial.print("Current RTC time: ");
 
         printFormatedDateAndTime(currentTime.hour(), currentTime.minute(), currentTime.second(),
                                   currentTime.day(), currentTime.month(), currentTime.year());
