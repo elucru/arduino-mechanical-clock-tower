@@ -1,4 +1,4 @@
-/* Last update: 2026-08-16 */
+/* Last update: 2026-09-16 */
 #ifndef MAIN_H
 #define MAIN_H
 
@@ -7,7 +7,7 @@
 #include <EEPROM.h>
 
 /* This is for testing with 3D printed clock, commented or deleted for normal clock tower */
-// #define PRINTED_CLOCK_3D 
+#define PRINTED_CLOCK_3D 
 
 /* To set the RTC time and date, choose one option from: 
    1. Manual adjust date and time (uncomment the line below)
@@ -27,6 +27,7 @@
 #define POWER_DOWN_PIN                		3   /* Power up pin is HIGH, power down pin is LOW */
 
 #define BUTTON_PIN                        6   /* Pin for the user button */
+#define BUTTON_RESET_HOLD_TIME          2000u   /* Milliseconds the button must be held to trigger a software reset */
 
 #define DEBOUNCE_DELAY                 	 5000   /* Seconds of debounce delay for the power down check */
 

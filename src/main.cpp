@@ -1,5 +1,3 @@
-#include <Arduino.h>
-
 /*  Tower clock update - implements automatic time adjustment after power supply is restored.
     It uses an RTC to keep the exact time and write to EEPROM the moment of power failure (connected: SCL -> A5, SDA -> A4).
     The power failure sensor is a voltage divider with resistors, calculated to have a 4,5V output, 
@@ -17,6 +15,8 @@
  *
 **/
 
+#include <Arduino.h>
+#include <avr/wdt.h>
 #include <main.h>
 
 /* Define global variables */
@@ -38,6 +38,7 @@ static uint8_t setClock(void);
 static uint8_t writeToEEPROM(uint16_t index, uint8_t currentHour, uint8_t currentMinute, uint8_t currentSecond, uint8_t currentDay, uint8_t currentMonth, uint8_t currentYear);
 static void processSerialCommand();
 static void resetEEPROM(void);
+static void softwareReset(void);
 
 /***************************************************************************************************************
  * @brief Setup function initializes the RTC, EEPROM, and uC pin modes.
@@ -182,11 +183,29 @@ void loop(void)
   {
     processSerialCommand();
   }
-/* Test button press. Can be used for future debugging purposes. */
-//   if(digitalRead(BUTTON_PIN) == LOW)
-//   {
-//     Serial.println("Am apasat butonul.");
-//   }
+
+  /* Holding the button for BUTTON_RESET_HOLD_TIME triggers a full software reset of the microcontroller. */
+  static uint32_t buttonPressStart = 0u;
+  static bool buttonHeld = false;
+
+  if (digitalRead(BUTTON_PIN) == LOW)
+  {
+    if (!buttonHeld)
+    {
+        buttonHeld = true;
+        buttonPressStart = millis();
+    }
+    else if ((millis() - buttonPressStart) >= BUTTON_RESET_HOLD_TIME)
+    {
+        Serial.println("Buton apasat: se reporneste microcontrolerul...");
+        Serial.flush();
+        softwareReset();
+    }
+  }
+  else
+  {
+    buttonHeld = false;
+  }
 }
 
 /***************************************************************************************************************
@@ -836,5 +855,21 @@ static void resetEEPROM(void)
     {
         /* code */
         EEPROM.write(i, 255); /* Reset all bytes in EEPROM */
+    }
+}
+
+/***************************************************************************************************************
+ * @brief Perform a full software reset of the microcontroller using the watchdog timer.
+ * @param None
+ * @return None
+ * @note Enables the watchdog with the shortest timeout and waits for it to fire, which restarts execution
+ *       from setup() as if the board had just been powered on.
+ ***************************************************************************************************************/
+static void softwareReset(void)
+{
+    wdt_enable(WDTO_15MS);
+
+    while (1)
+    {/* Wait here until the watchdog timer fires and resets the microcontroller. */
     }
 }
